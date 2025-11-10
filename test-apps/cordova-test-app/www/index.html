@@ -40,12 +40,55 @@
             background: #ccc;
             cursor: not-allowed;
         }
+        button.play-btn {
+            background: #28a745;
+        }
+        button.play-btn:active:not(:disabled) {
+            background: #1e7e34;
+        }
+        .level-meter-container {
+            margin: 20px 0;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 4px;
+        }
+        .level-meter-label {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 8px;
+        }
+        .level-meter {
+            width: 100%;
+            height: 30px;
+            background: #e9ecef;
+            border-radius: 4px;
+            overflow: hidden;
+            position: relative;
+        }
+        .level-meter-fill {
+            height: 100%;
+            background: linear-gradient(to right, #28a745, #ffc107, #dc3545);
+            transition: width 0.1s;
+            width: 0%;
+        }
+        .level-meter-value {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 12px;
+            font-weight: bold;
+            color: #333;
+            text-shadow: 0 0 3px white;
+        }
         #status {
             margin-top: 20px;
             padding: 15px;
             background: #e9ecef;
             border-radius: 4px;
             min-height: 100px;
+            max-height: 200px;
+            overflow-y: auto;
             font-family: monospace;
             font-size: 12px;
             white-space: pre-wrap;
@@ -56,6 +99,27 @@
             padding: 10px;
             margin: 10px 0;
         }
+        .stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin: 15px 0;
+        }
+        .stat-box {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            text-align: center;
+        }
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+        }
+        .stat-value {
+            font-size: 20px;
+            font-weight: bold;
+            color: #333;
+        }
     </style>
 </head>
 <body>
@@ -64,14 +128,37 @@
 
         <div class="info">
             <strong>Test the cordova-plugin-audioinput</strong><br>
-            This app tests audio capture functionality.
+            This app tests audio capture with playback and level monitoring.
         </div>
 
         <div>
-            <button id="startBtn" onclick="startCapture()">Start Capture</button>
-            <button id="stopBtn" onclick="stopCapture()" disabled>Stop Capture</button>
+            <button id="startBtn" onclick="startCapture()">▶ Start Capture</button>
+            <button id="stopBtn" onclick="stopCapture()" disabled>⬛ Stop Capture</button>
+            <button id="playBtn" class="play-btn" onclick="playback()" disabled>🔊 Play Recording</button>
+        </div>
+
+        <div>
             <button onclick="getPermission()">Request Permission</button>
             <button onclick="checkMicrophonePermission()">Check Permission</button>
+        </div>
+
+        <div class="level-meter-container">
+            <div class="level-meter-label">Audio Level</div>
+            <div class="level-meter">
+                <div class="level-meter-fill" id="levelFill"></div>
+                <div class="level-meter-value" id="levelValue">0%</div>
+            </div>
+        </div>
+
+        <div class="stats">
+            <div class="stat-box">
+                <div class="stat-label">Chunks Received</div>
+                <div class="stat-value" id="chunkCount">0</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">Recording Duration</div>
+                <div class="stat-value" id="duration">0.0s</div>
+            </div>
         </div>
 
         <div id="status">Waiting for device ready...</div>
@@ -81,17 +168,46 @@
     <script type="text/javascript">
         let captureStarted = false;
         let audioDataCount = 0;
+        let audioBuffer = [];
+        let audioContext = null;
+        let sampleRate = 44100;
+        let startTime = null;
 
         function log(message) {
             const status = document.getElementById('status');
             const timestamp = new Date().toLocaleTimeString();
             status.textContent += `[${timestamp}] ${message}\n`;
+            status.scrollTop = status.scrollHeight;
             console.log(message);
         }
 
         function updateButtons() {
             document.getElementById('startBtn').disabled = captureStarted;
             document.getElementById('stopBtn').disabled = !captureStarted;
+            document.getElementById('playBtn').disabled = audioBuffer.length === 0;
+        }
+
+        function updateStats() {
+            document.getElementById('chunkCount').textContent = audioDataCount;
+            if (startTime && captureStarted) {
+                const duration = (Date.now() - startTime) / 1000;
+                document.getElementById('duration').textContent = duration.toFixed(1) + 's';
+            }
+        }
+
+        function updateLevel(data) {
+            if (!data || data.length === 0) return;
+
+            // Calculate RMS level
+            let sum = 0;
+            for (let i = 0; i < data.length; i++) {
+                sum += data[i] * data[i];
+            }
+            const rms = Math.sqrt(sum / data.length);
+            const level = Math.min(100, Math.round(rms * 100));
+
+            document.getElementById('levelFill').style.width = level + '%';
+            document.getElementById('levelValue').textContent = level + '%';
         }
 
         function getPermission() {
@@ -141,10 +257,24 @@
         function startCapture() {
             log('Starting audio capture...');
             audioDataCount = 0;
+            audioBuffer = [];
+            startTime = Date.now();
+            document.getElementById('duration').textContent = '0.0s';
+            document.getElementById('chunkCount').textContent = '0';
 
             if (!window.audioinput) {
                 log('✗ AudioInput plugin not found!');
                 return;
+            }
+
+            // Initialize Web Audio API
+            if (!audioContext) {
+                try {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    log('✓ Web Audio API initialized');
+                } catch (e) {
+                    log('✗ Web Audio API not available: ' + e.message);
+                }
             }
 
             const captureCfg = {
@@ -155,6 +285,7 @@
                 normalize: true,
                 normalizationFactor: 32767.0
             };
+            sampleRate = captureCfg.sampleRate;
 
             audioinput.start(captureCfg);
 
@@ -164,7 +295,7 @@
 
             captureStarted = true;
             updateButtons();
-            log('✓ Capture started with config: ' + JSON.stringify(captureCfg, null, 2));
+            log('✓ Capture started (44.1kHz, Mono, 16-bit)');
         }
 
         function stopCapture() {
@@ -174,22 +305,86 @@
                 audioinput.stop();
                 window.removeEventListener('audioinput', onAudioInput, false);
                 window.removeEventListener('audioinputerror', onAudioInputError, false);
-                log('✓ Capture stopped. Received ' + audioDataCount + ' audio data events');
+
+                const duration = audioBuffer.length / sampleRate;
+                log('✓ Capture stopped');
+                log(`  Received ${audioDataCount} chunks`);
+                log(`  Duration: ${duration.toFixed(2)} seconds`);
+                log(`  Samples: ${audioBuffer.length}`);
+                log('  Ready for playback!');
             }
 
             captureStarted = false;
+            startTime = null;
             updateButtons();
+
+            // Reset level meter
+            document.getElementById('levelFill').style.width = '0%';
+            document.getElementById('levelValue').textContent = '0%';
         }
 
         function onAudioInput(evt) {
             audioDataCount++;
-            if (audioDataCount % 10 === 0) {
-                log(`Receiving audio data... (${audioDataCount} chunks, length: ${evt.data ? evt.data.length : 'N/A'})`);
+
+            if (evt.data) {
+                // Store audio data for playback
+                audioBuffer = audioBuffer.concat(Array.from(evt.data));
+
+                // Update level meter
+                updateLevel(evt.data);
+
+                // Update stats
+                updateStats();
+
+                // Log periodically
+                if (audioDataCount % 20 === 0) {
+                    const duration = audioBuffer.length / sampleRate;
+                    log(`Recording: ${duration.toFixed(1)}s (${audioDataCount} chunks)`);
+                }
             }
         }
 
         function onAudioInputError(error) {
             log('✗ Audio input error: ' + JSON.stringify(error));
+        }
+
+        function playback() {
+            if (audioBuffer.length === 0) {
+                log('✗ No audio data to play');
+                return;
+            }
+
+            if (!audioContext) {
+                log('✗ Web Audio API not available');
+                return;
+            }
+
+            log('▶ Playing back recorded audio...');
+
+            try {
+                // Create audio buffer
+                const buffer = audioContext.createBuffer(1, audioBuffer.length, sampleRate);
+                const channelData = buffer.getChannelData(0);
+
+                // Copy audio data
+                for (let i = 0; i < audioBuffer.length; i++) {
+                    channelData[i] = audioBuffer[i];
+                }
+
+                // Create source and play
+                const source = audioContext.createBufferSource();
+                source.buffer = buffer;
+                source.connect(audioContext.destination);
+
+                source.onended = function() {
+                    log('✓ Playback finished');
+                };
+
+                source.start(0);
+                log('✓ Playing ' + (audioBuffer.length / sampleRate).toFixed(2) + ' seconds of audio');
+            } catch (e) {
+                log('✗ Playback error: ' + e.message);
+            }
         }
 
         // Device ready event
