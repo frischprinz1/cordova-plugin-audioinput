@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+
+# Cordova
+cordova-test-app/platforms/
+cordova-test-app/plugins/
+cordova-test-app/.cordova/
+
+# Capacitor
+capacitor-test-app/dist/
+capacitor-test-app/android/
+capacitor-test-app/ios/
+capacitor-test-app/.capacitor/
+
+# Build outputs
+*.apk
+*.ipa
+*.app
+*.aab
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Temporary files
+*.tmp
+.temp/
