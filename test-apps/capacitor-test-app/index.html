@@ -115,6 +115,77 @@
         .log-error { color: #dc3545; }
         .log-info { color: #17a2b8; }
         .log-warning { color: #ffc107; }
+
+        .level-meter-container {
+            margin: 20px 0;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+
+        .level-meter-label {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+
+        .level-meter {
+            width: 100%;
+            height: 30px;
+            background: #e9ecef;
+            border-radius: 6px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .level-meter-fill {
+            height: 100%;
+            background: linear-gradient(to right, #28a745, #ffc107, #dc3545);
+            transition: width 0.1s;
+            width: 0%;
+        }
+
+        .level-meter-value {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 12px;
+            font-weight: bold;
+            color: #333;
+            text-shadow: 0 0 3px white;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin: 15px 0;
+        }
+
+        .stat-box {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        button.play-btn {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+        }
     </style>
 </head>
 <body>
@@ -124,15 +195,35 @@
 
         <div class="info">
             <strong>Testing cordova-plugin-audioinput with Capacitor</strong><br>
-            This app tests audio capture functionality on Capacitor.
+            This app tests audio capture with playback and level monitoring.
         </div>
 
         <div class="button-group">
             <button id="startBtn" onclick="startCapture()">▶ Start Capture</button>
             <button id="stopBtn" class="stop" onclick="stopCapture()" disabled>⬛ Stop Capture</button>
+            <button id="playBtn" class="play-btn" onclick="playback()" disabled>🔊 Play Recording</button>
             <button onclick="getPermission()">🎤 Request Permission</button>
             <button onclick="checkMicrophonePermission()">✓ Check Permission</button>
             <button onclick="clearLog()" class="full-width">🗑 Clear Log</button>
+        </div>
+
+        <div class="level-meter-container">
+            <div class="level-meter-label">Audio Level</div>
+            <div class="level-meter">
+                <div class="level-meter-fill" id="levelFill"></div>
+                <div class="level-meter-value" id="levelValue">0%</div>
+            </div>
+        </div>
+
+        <div class="stats">
+            <div class="stat-box">
+                <div class="stat-label">Chunks Received</div>
+                <div class="stat-value" id="chunkCount">0</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-label">Recording Duration</div>
+                <div class="stat-value" id="duration">0.0s</div>
+            </div>
         </div>
 
         <div id="status">Initializing...</div>

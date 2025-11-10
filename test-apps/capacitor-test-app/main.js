@@ -1,7 +1,14 @@
 import { Capacitor } from '@capacitor/core';
+import { AudioInput } from 'cordova-plugin-audioinput';
 
 let captureStarted = false;
 let audioDataCount = 0;
+let audioBuffer = [];
+let audioContext = null;
+let sampleRate = 44100;
+let startTime = null;
+let audioDataListener = null;
+let audioErrorListener = null;
 
 window.log = function(message, type = 'info') {
     const status = document.getElementById('status');
@@ -30,61 +37,78 @@ window.clearLog = function() {
 function updateButtons() {
     document.getElementById('startBtn').disabled = captureStarted;
     document.getElementById('stopBtn').disabled = !captureStarted;
+    document.getElementById('playBtn').disabled = audioBuffer.length === 0;
 }
 
-window.getPermission = function() {
+function updateStats() {
+    document.getElementById('chunkCount').textContent = audioDataCount;
+    if (startTime && captureStarted) {
+        const duration = (Date.now() - startTime) / 1000;
+        document.getElementById('duration').textContent = duration.toFixed(1) + 's';
+    }
+}
+
+function updateLevel(data) {
+    if (!data || data.length === 0) return;
+
+    // Calculate RMS level
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) {
+        sum += data[i] * data[i];
+    }
+    const rms = Math.sqrt(sum / data.length);
+    const level = Math.min(100, Math.round(rms * 100));
+
+    document.getElementById('levelFill').style.width = level + '%';
+    document.getElementById('levelValue').textContent = level + '%';
+}
+
+window.getPermission = async function() {
     log('Requesting microphone permission...', 'info');
 
-    if (window.audioinput && audioinput.checkMicrophonePermission) {
-        audioinput.checkMicrophonePermission(
-            function(hasPermission) {
-                if (hasPermission) {
-                    log('Permission already granted', 'success');
-                } else {
-                    log('Requesting permission...', 'info');
-                    audioinput.getMicrophonePermission(
-                        function(granted) {
-                            log(granted ? 'Permission granted' : 'Permission denied', granted ? 'success' : 'error');
-                        },
-                        function(error) {
-                            log('Error requesting permission: ' + error, 'error');
-                        }
-                    );
-                }
-            },
-            function(error) {
-                log('Error checking permission: ' + error, 'error');
-            }
-        );
-    } else {
-        log('Permission API not available', 'error');
+    try {
+        const result = await AudioInput.checkMicrophonePermission();
+        if (result.granted) {
+            log('Permission already granted', 'success');
+        } else {
+            log('Requesting permission...', 'info');
+            const permResult = await AudioInput.getMicrophonePermission();
+            log(permResult.granted ? 'Permission granted' : 'Permission denied',
+                permResult.granted ? 'success' : 'error');
+        }
+    } catch (error) {
+        log('Error with permissions: ' + error.message, 'error');
     }
 }
 
-window.checkMicrophonePermission = function() {
+window.checkMicrophonePermission = async function() {
     log('Checking microphone permission...', 'info');
 
-    if (window.audioinput && audioinput.checkMicrophonePermission) {
-        audioinput.checkMicrophonePermission(
-            function(hasPermission) {
-                log(hasPermission ? 'Has microphone permission' : 'No microphone permission', hasPermission ? 'success' : 'warning');
-            },
-            function(error) {
-                log('Error checking permission: ' + error, 'error');
-            }
-        );
-    } else {
-        log('Check permission API not available', 'error');
+    try {
+        const result = await AudioInput.checkMicrophonePermission();
+        log(result.granted ? 'Has microphone permission' : 'No microphone permission',
+            result.granted ? 'success' : 'warning');
+    } catch (error) {
+        log('Error checking permission: ' + error.message, 'error');
     }
 }
 
-window.startCapture = function() {
+window.startCapture = async function() {
     log('Starting audio capture...', 'info');
     audioDataCount = 0;
+    audioBuffer = [];
+    startTime = Date.now();
+    document.getElementById('duration').textContent = '0.0s';
+    document.getElementById('chunkCount').textContent = '0';
 
-    if (!window.audioinput) {
-        log('AudioInput plugin not found!', 'error');
-        return;
+    // Initialize Web Audio API
+    if (!audioContext) {
+        try {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            log('Web Audio API initialized', 'success');
+        } catch (e) {
+            log('Web Audio API not available: ' + e.message, 'error');
+        }
     }
 
     const captureCfg = {
@@ -95,60 +119,152 @@ window.startCapture = function() {
         normalize: true,
         normalizationFactor: 32767.0
     };
+    sampleRate = captureCfg.sampleRate;
 
-    audioinput.start(captureCfg);
+    try {
+        // Remove old listeners if any
+        if (audioDataListener) {
+            await audioDataListener.remove();
+        }
+        if (audioErrorListener) {
+            await audioErrorListener.remove();
+        }
 
-    // Listen for audio input events
-    window.addEventListener('audioinput', onAudioInput, false);
-    window.addEventListener('audioinputerror', onAudioInputError, false);
+        // Add event listeners
+        audioDataListener = await AudioInput.addListener('audioData', (event) => {
+            onAudioInput(event);
+        });
 
-    captureStarted = true;
-    updateButtons();
-    log('Capture started', 'success');
-    log(`Config: ${JSON.stringify(captureCfg, null, 2)}`, 'info');
+        audioErrorListener = await AudioInput.addListener('audioError', (event) => {
+            onAudioInputError(event);
+        });
+
+        // Start capture
+        await AudioInput.start(captureCfg);
+
+        captureStarted = true;
+        updateButtons();
+        log('Capture started (44.1kHz, Mono, 16-bit)', 'success');
+    } catch (error) {
+        log('Failed to start capture: ' + error.message, 'error');
+    }
 }
 
-window.stopCapture = function() {
+window.stopCapture = async function() {
     log('Stopping audio capture...', 'info');
 
-    if (window.audioinput) {
-        audioinput.stop();
-        window.removeEventListener('audioinput', onAudioInput, false);
-        window.removeEventListener('audioinputerror', onAudioInputError, false);
-        log(`Capture stopped. Received ${audioDataCount} audio data events`, 'success');
-    }
+    try {
+        await AudioInput.stop();
 
-    captureStarted = false;
-    updateButtons();
+        // Remove listeners
+        if (audioDataListener) {
+            await audioDataListener.remove();
+            audioDataListener = null;
+        }
+        if (audioErrorListener) {
+            await audioErrorListener.remove();
+            audioErrorListener = null;
+        }
+
+        const duration = audioBuffer.length / sampleRate;
+        log('Capture stopped', 'success');
+        log(`  Received ${audioDataCount} chunks`, 'info');
+        log(`  Duration: ${duration.toFixed(2)} seconds`, 'info');
+        log(`  Samples: ${audioBuffer.length}`, 'info');
+        log('  Ready for playback!', 'info');
+
+        captureStarted = false;
+        startTime = null;
+        updateButtons();
+
+        // Reset level meter
+        document.getElementById('levelFill').style.width = '0%';
+        document.getElementById('levelValue').textContent = '0%';
+    } catch (error) {
+        log('Failed to stop capture: ' + error.message, 'error');
+    }
 }
 
-function onAudioInput(evt) {
+function onAudioInput(event) {
     audioDataCount++;
-    if (audioDataCount === 1 || audioDataCount % 20 === 0) {
-        const dataLength = evt.data ? evt.data.length : 'N/A';
-        log(`Audio data received (chunk #${audioDataCount}, length: ${dataLength})`, 'success');
+
+    if (event.data) {
+        // Store audio data for playback
+        audioBuffer = audioBuffer.concat(Array.from(event.data));
+
+        // Update level meter
+        updateLevel(event.data);
+
+        // Update stats
+        updateStats();
+
+        // Log periodically
+        if (audioDataCount % 20 === 0) {
+            const duration = audioBuffer.length / sampleRate;
+            log(`Recording: ${duration.toFixed(1)}s (${audioDataCount} chunks)`, 'info');
+        }
     }
 }
 
-function onAudioInputError(error) {
-    log('Audio input error: ' + JSON.stringify(error), 'error');
+function onAudioInputError(event) {
+    log('Audio input error: ' + (event.message || JSON.stringify(event)), 'error');
+}
+
+window.playback = function() {
+    if (audioBuffer.length === 0) {
+        log('No audio data to play', 'error');
+        return;
+    }
+
+    if (!audioContext) {
+        log('Web Audio API not available', 'error');
+        return;
+    }
+
+    log('Playing back recorded audio...', 'info');
+
+    try {
+        // Create audio buffer
+        const buffer = audioContext.createBuffer(1, audioBuffer.length, sampleRate);
+        const channelData = buffer.getChannelData(0);
+
+        // Copy audio data
+        for (let i = 0; i < audioBuffer.length; i++) {
+            channelData[i] = audioBuffer[i];
+        }
+
+        // Create source and play
+        const source = audioContext.createBufferSource();
+        source.buffer = buffer;
+        source.connect(audioContext.destination);
+
+        source.onended = function() {
+            log('Playback finished', 'success');
+        };
+
+        source.start(0);
+        log('Playing ' + (audioBuffer.length / sampleRate).toFixed(2) + ' seconds of audio', 'success');
+    } catch (e) {
+        log('Playback error: ' + e.message, 'error');
+    }
 }
 
 // Initialize when DOM is ready
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', async function() {
     log('DOM Content Loaded', 'info');
     log(`Platform: ${Capacitor.getPlatform()}`, 'info');
     log(`Native: ${Capacitor.isNativePlatform()}`, 'info');
 
     // Check for plugin
-    setTimeout(() => {
-        if (window.audioinput) {
+    setTimeout(async () => {
+        try {
+            // Try to check permissions to verify plugin is loaded
+            await AudioInput.checkMicrophonePermission();
             log('AudioInput plugin loaded', 'success');
-            const methods = Object.keys(window.audioinput).filter(key => typeof window.audioinput[key] === 'function');
-            log(`Plugin methods: ${methods.join(', ')}`, 'info');
-        } else {
+        } catch (error) {
             log('AudioInput plugin NOT found!', 'error');
             log('Make sure to install the plugin and sync platforms', 'warning');
+            log('Error: ' + error.message, 'error');
         }
     }, 500);
 });
