@@ -22,5 +22,4 @@
     </platform>
 
     <preference name="DisallowOverscroll" value="true" />
-    <preference name="BackgroundColor" value="0xff0000ff" />
 </widget>
