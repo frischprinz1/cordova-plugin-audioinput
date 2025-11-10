@@ -36,6 +36,7 @@ Podfile.lock
 !www/
 !demo/
 !src/
+!test-apps/
 !android/
 !ios/
 !README.md

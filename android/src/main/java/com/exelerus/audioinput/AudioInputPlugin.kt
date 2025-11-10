@@ -4,6 +4,7 @@ import android.Manifest
 import android.os.Handler
 import android.os.Looper
 import android.os.Message
+import android.util.Base64
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
@@ -14,6 +15,8 @@ import com.exelerus.cordova.audioinputcapture.AudioInputReceiver
 import org.json.JSONArray
 import java.lang.ref.WeakReference
 import java.net.URI
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 /**
  * Capacitor plugin for audio input capture
@@ -90,30 +93,51 @@ class AudioInputPlugin : Plugin() {
             val fileUrlString = call.getString("fileUrl")
             fileUrl = if (fileUrlString != null) URI(fileUrlString) else null
 
-            // Check permission
+            // Check permission and request if not granted
             if (getPermissionState("microphone") != com.getcapacitor.PermissionState.GRANTED) {
-                call.reject("Microphone permission not granted")
+                requestPermissionForAlias("microphone", call, "startPermissionCallback")
                 return
             }
 
-            // Stop existing receiver if any
-            receiver?.interrupt()
-
-            // Create and start new receiver (uses existing Java class!)
-            receiver = AudioInputReceiver(
-                sampleRate,
-                bufferSize,
-                channels,
-                format,
-                audioSource,
-                fileUrl
-            )
-            receiver?.setHandler(handler)
-            receiver?.start()
-
+            // Permission granted, start recording
+            startRecording()
             call.resolve()
         } catch (e: Exception) {
             call.reject("Failed to start audio capture: ${e.message}", e)
+        }
+    }
+
+    private fun startRecording() {
+        // Stop existing receiver if any
+        receiver?.interrupt()
+
+        // Create and start new receiver (uses existing Java class!)
+        receiver = AudioInputReceiver(
+            sampleRate,
+            bufferSize,
+            channels,
+            format,
+            audioSource,
+            fileUrl
+        )
+        receiver?.setHandler(handler)
+        receiver?.start()
+    }
+
+    /**
+     * Permission callback for start method
+     */
+    @com.getcapacitor.annotation.PermissionCallback
+    private fun startPermissionCallback(call: PluginCall) {
+        if (getPermissionState("microphone") == com.getcapacitor.PermissionState.GRANTED) {
+            try {
+                startRecording()
+                call.resolve()
+            } catch (e: Exception) {
+                call.reject("Failed to start audio capture: ${e.message}", e)
+            }
+        } else {
+            call.reject("Microphone permission denied")
         }
     }
 
@@ -163,9 +187,21 @@ class AudioInputPlugin : Plugin() {
 
                 when {
                     data != null -> {
-                        // Audio data received - convert to JSON array format
+                        // Audio data received as Base64 - decode and convert to float array
+                        val bytes = Base64.decode(data, Base64.NO_WRAP)
+                        val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+
+                        // Convert to short array (PCM_16BIT)
+                        val audioData = JSONArray()
+                        while (buffer.remaining() >= 2) {
+                            val sample = buffer.short
+                            // Normalize to -1.0 to 1.0 range
+                            val normalized = sample.toFloat() / 32767.0f
+                            audioData.put(normalized.toDouble())
+                        }
+
                         val ret = JSObject()
-                        ret.put("data", JSONArray(data))
+                        ret.put("data", audioData)
                         plugin.notifyListeners("audioData", ret)
                     }
                     error != null -> {
