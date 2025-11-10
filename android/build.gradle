@@ -46,11 +46,12 @@ android {
         jvmTarget = '17'
     }
 
-    // Include the existing Java source files
+    // Include the existing Java source files (excluding Cordova-specific classes)
     sourceSets {
         main {
             java {
                 srcDirs = ['src/main/java', '../src/android']
+                exclude 'AudioInputCapture.java'
             }
         }
     }
