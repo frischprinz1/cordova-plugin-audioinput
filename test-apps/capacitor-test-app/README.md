@@ -170,7 +170,7 @@ If you want to test local changes to the plugin without pushing to GitHub:
 
 3. **In the test app, install the local tarball (if using Option B):**
    ```bash
-   npm install /path/to/cordova-plugin-audioinput-1.0.3.tgz
+   npm install /path/to/cordova-plugin-audioinput-2.0.0.tgz
    npx cap sync
    ```
 
